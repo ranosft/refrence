@@ -1,6 +1,18 @@
 key: Any,
 // Attribute type definitions
 highlight: true,  // Boolean, String, Object
+highlight: {
+  color: 'orange',
+  fillMode: 'light',
+  class : css class name,
+  style : css class as object
+  contentClass : same for content as class
+  contentStyle : same
+  start: object
+  end: object
+  base :object ///////// above three have diff configuration
+  
+} ///object example
 dot: true,        // Boolean, String, Object
 bar: true,        // Boolean, String, Object
 content: 'red',   // Boolean, String, Object
