@@ -1,0 +1,85 @@
+#!/bin/bash
+# setup-chroot-user.sh
+# Create a user with a chroot environment on Linux
+
+set -e
+
+if [ "$EUID" -ne 0 ]; then
+  echo "Run as root!"
+  exit 1
+fi
+
+# === Config ===
+USERNAME="$1"
+CHROOT_DIR="/srv/chroot/$USERNAME"
+SHELL="/bin/bash"
+
+if [ -z "$USERNAME" ]; then
+  echo "Usage: $0 <username>"
+  exit 1
+fi
+
+# === Create user without home dir (we'll set it inside chroot) ===
+useradd -M -s "$SHELL" "$USERNAME"
+
+# === Create chroot directory structure ===
+mkdir -p "$CHROOT_DIR"{/bin,/lib,/lib64,/usr,/etc,/dev,/home,"/home/$USERNAME"}
+
+# Set ownership for the user's home inside chroot
+chown -R "$USERNAME:$USERNAME" "$CHROOT_DIR/home/$USERNAME"
+
+# === Copy required binaries and libraries ===
+copy_binaries() {
+  for bin in "$@"; do
+    BIN_PATH=$(command -v "$bin")
+    if [ -z "$BIN_PATH" ]; then
+      echo "Binary $bin not found, skipping"
+      continue
+    fi
+    DEST="$CHROOT_DIR$BIN_PATH"
+    mkdir -p "$(dirname "$DEST")"
+    cp "$BIN_PATH" "$DEST"
+
+    # Copy required libraries
+    for lib in $(ldd "$BIN_PATH" | awk '{if ($3 ~ /^\//) print $3}'); do
+      DEST_LIB="$CHROOT_DIR$lib"
+      mkdir -p "$(dirname "$DEST_LIB")"
+      cp "$lib" "$DEST_LIB"
+    done
+  done
+}
+
+copy_binaries bash ls mkdir touch echo cat pwd
+
+# === Minimal passwd & group files ===
+cat > "$CHROOT_DIR/etc/passwd" <<EOF
+$USERNAME:x:$(id -u "$USERNAME"):$(id -g "$USERNAME")::/home/$USERNAME:$SHELL
+EOF
+
+cat > "$CHROOT_DIR/etc/group" <<EOF
+$USERNAME:x:$(id -g "$USERNAME"):
+EOF
+
+# === Setup dev nodes (optional but useful) ===
+mknod -m 666 "$CHROOT_DIR/dev/null" c 1 3
+mknod -m 666 "$CHROOT_DIR/dev/tty" c 5 0
+mknod -m 666 "$CHROOT_DIR/dev/zero" c 1 5
+mknod -m 666 "$CHROOT_DIR/dev/random" c 1 8
+
+# === Configure SSH for Chroot ===
+SSHD_CONFIG="/etc/ssh/sshd_config"
+if ! grep -q "Match User $USERNAME" "$SSHD_CONFIG"; then
+  cat >> "$SSHD_CONFIG" <<EOF
+
+Match User $USERNAME
+    ChrootDirectory $CHROOT_DIR
+    X11Forwarding no
+    AllowTcpForwarding no
+EOF
+fi
+
+# Restart sshd
+systemctl restart sshd
+
+echo "User $USERNAME created with chroot at $CHROOT_DIR"
+echo "Try logging in with: ssh $USERNAME@<server-ip>"
